@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 )
 
 type NameResponse struct {
@@ -21,26 +23,27 @@ type JokeResponse struct {
 	Value JokeEntry
 }
 
-func handler(res http.ResponseWriter, req *http.Request) {
-	if req.URL.Path != "/" {
-		http.Error(res, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-		return
-	}
+func errorCode(c *gin.Context, code int) {
+	c.String(code, http.StatusText(code))
+}
+
+func handler(c *gin.Context) {
 
 	name_res, err := http.Get("https://names.mcquay.me/api/v0")
 	if err != nil {
-		http.Error(res, err.Error(), http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, err.Error())
 		return
 	}
 	if name_res.StatusCode != 200 {
-		http.Error(res, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
+		logrus.Error("Failed to fetch name. code: ", name_res.StatusCode)
+		errorCode(c, http.StatusBadGateway)
 		return
 	}
 
 	var name NameResponse
 	err = json.NewDecoder(name_res.Body).Decode(&name)
 	if err != nil {
-		http.Error(res, err.Error(), http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -49,26 +52,27 @@ func handler(res http.ResponseWriter, req *http.Request) {
 		name.FirstName,
 		name.LastName))
 	if err != nil {
-		http.Error(res, err.Error(), http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, err.Error())
 		return
 	}
 	if joke_res.StatusCode != 200 {
-		http.Error(res, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
+		logrus.Error("Failed to fetch joke. code: ", joke_res.StatusCode)
+		errorCode(c, http.StatusBadGateway)
 		return
 	}
 
 	var joke JokeResponse
 	err = json.NewDecoder(joke_res.Body).Decode(&joke)
 	if err != nil {
-		http.Error(res, err.Error(), http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	fmt.Fprintf(res, joke.Value.Joke)
+	c.String(http.StatusOK, joke.Value.Joke)
 }
 
 func main() {
-	http.HandleFunc("/", handler)
-	fmt.Println("Starting server on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	router := gin.Default()
+	router.GET("/", handler)
+	router.Run(":8080")
 }
