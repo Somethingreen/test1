@@ -9,66 +9,95 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type NameResponse struct {
+type Name struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
 }
 
-type JokeEntry struct {
+type NameResult struct {
+	name *Name
+	err  error
+}
+
+type Joke struct {
 	Joke string `json:"joke"`
 }
 
 type JokeResponse struct {
 	Type  string `json:"type"`
-	Value JokeEntry
+	Value Joke
 }
 
-func errorCode(c *gin.Context, code int) {
-	c.String(code, http.StatusText(code))
+type JokeResult struct {
+	joke string
+	err  error
 }
 
-func handler(c *gin.Context) {
-
-	name_res, err := http.Get("https://names.mcquay.me/api/v0")
+func fetchName(c chan NameResult) {
+	// TODO: Name API is rate limited. Consider caching previous results and reusing cached values in case of errors
+	res, err := http.Get("https://names.mcquay.me/api/v0")
 	if err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
+		c <- NameResult{nil, err}
 		return
 	}
-	if name_res.StatusCode != 200 {
-		logrus.Error("Failed to fetch name. code: ", name_res.StatusCode)
-		errorCode(c, http.StatusBadGateway)
-		return
-	}
-
-	var name NameResponse
-	err = json.NewDecoder(name_res.Body).Decode(&name)
-	if err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
+	if res.StatusCode != 200 {
+		c <- NameResult{nil, fmt.Errorf("Failed to fetch random name. Code: %d", res.StatusCode)}
 		return
 	}
 
-	joke_res, err := http.Get(fmt.Sprintf(
-		"http://api.icndb.com/jokes/random?firstName=%s&lastName=%s&limitTo=nerdy",
-		name.FirstName,
-		name.LastName))
+	var name Name
+	err = json.NewDecoder(res.Body).Decode(&name)
 	if err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
+		c <- NameResult{nil, err}
 		return
 	}
-	if joke_res.StatusCode != 200 {
-		logrus.Error("Failed to fetch joke. code: ", joke_res.StatusCode)
-		errorCode(c, http.StatusBadGateway)
+
+	c <- NameResult{&name, nil}
+}
+
+func fetchJoke(c chan JokeResult) {
+	res, err := http.Get("http://api.icndb.com/jokes/random?firstName=%s&lastName=%s&limitTo=nerdy")
+
+	if err != nil {
+		c <- JokeResult{"", err}
+		return
+	}
+	if res.StatusCode != 200 {
+		c <- JokeResult{"", fmt.Errorf("Failed to fetch random joke. Code: %d", res.StatusCode)}
 		return
 	}
 
 	var joke JokeResponse
-	err = json.NewDecoder(joke_res.Body).Decode(&joke)
+	err = json.NewDecoder(res.Body).Decode(&joke)
 	if err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
+		c <- JokeResult{"", err}
 		return
 	}
 
-	c.String(http.StatusOK, joke.Value.Joke)
+	c <- JokeResult{joke.Value.Joke, nil}
+}
+
+func handler(c *gin.Context) {
+	name_chan := make(chan NameResult)
+	joke_chan := make(chan JokeResult)
+
+	go fetchName(name_chan)
+	go fetchJoke(joke_chan)
+
+	nres := <-name_chan
+	if nres.err != nil {
+		logrus.Error(nres.err.Error())
+		c.String(http.StatusBadGateway, nres.err.Error())
+		return
+	}
+	jres := <-joke_chan
+	if jres.err != nil {
+		logrus.Error(jres.err.Error())
+		c.String(http.StatusBadGateway, jres.err.Error())
+		return
+	}
+
+	c.String(http.StatusOK, fmt.Sprintf(jres.joke, nres.name.FirstName, nres.name.LastName))
 }
 
 func main() {
