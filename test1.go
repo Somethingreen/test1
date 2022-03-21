@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -101,7 +102,14 @@ func handler(c *gin.Context) {
 }
 
 func main() {
+	var addr string
+	if len(os.Args) < 2 {
+		addr = ":8080"
+	} else {
+		addr = os.Args[1]
+	}
+
 	router := gin.Default()
 	router.GET("/", handler)
-	router.Run(":8080")
+	router.Run(addr)
 }
